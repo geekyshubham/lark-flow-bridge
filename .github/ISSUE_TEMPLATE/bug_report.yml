@@ -1,0 +1,23 @@
+name: Button or setup problem
+description: Report a LARK A2 button, Wispr Flow shortcut, or macOS permission issue.
+title: "[Bug]: "
+body:
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and Mac architecture
+      placeholder: macOS 26.3, Apple Silicon
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Receiver firmware and Wispr Flow version
+      placeholder: RX 3.0.2.008, Flow 1.6.999
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Include the bridge's status message and whether Flow's recording indicator appeared. Do not include private transcripts or credentials.
+    validations:
+      required: true
