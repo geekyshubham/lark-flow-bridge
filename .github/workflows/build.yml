@@ -16,6 +16,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Test receiver status and setting safety
+        run: ./scripts/test.sh
       - name: Build and package Apple Silicon and Intel app
         run: ./scripts/package.sh
       - name: Verify app bundle and scripts

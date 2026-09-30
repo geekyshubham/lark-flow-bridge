@@ -12,12 +12,29 @@ This community utility was built for an A2 receiver whose latest offered firmwar
 
 ## Features
 
+- View live battery percentages, connection, charging and mute status for both LARK A2 microphones.
+- Read the receiver firmware and adjust noise cancellation while the bridge is stopped.
 - Start and stop Wispr Flow with the physical LARK A2 transmitter button.
 - Restore the microphone's original noise-cancellation setting before sending a shortcut.
 - Work around unavailable AI-mode/button-template commands on the tested A2 firmware.
 - Read only the matching Hollyland receiver's control reports; no audio, typed text, or transcripts are captured by the bridge.
 - Run locally without accounts, API keys, network requests, or third-party libraries.
 - Use a native macOS interface with a microphone/link app icon.
+
+## LARK A2 battery monitor and microphone controls for Mac
+
+Version 1.1 adds a live dashboard for both transmitters:
+
+| Feature | Available in this Mac app |
+| --- | --- |
+| Microphone 1 and 2 battery percentage | Yes, reported by the receiver; unknown/offline shows — |
+| Connected, charging and muted status | Yes, read-only status for each microphone |
+| Receiver firmware version | Yes |
+| Noise cancellation | Off, Low, Medium and High; stop the bridge before changing it |
+| Gain, sound tuning, channel mode, LED and power settings | Continue using HollyAudio on Android/iOS; USB write commands are not verified here |
+| Firmware updates | Use the official HollyAudio mobile app |
+
+The dashboard starts automatically and keeps refreshing when the bridge is stopped. Accessibility permission is needed for dictation shortcuts, not the battery display. Changes made using this app's noise control are confirmed with the receiver and never generate a dictation shortcut. Keep other receiver controllers closed.
 
 ## Prerequisites
 
@@ -77,7 +94,7 @@ See [protocol and implementation details](docs/HOW_IT_WORKS.md).
 
 ## Known limitations
 
-- Any change to the receiver's reported noise state can be interpreted as a click, including a receiver button or another control app. Stop the bridge before adjusting noise settings.
+- Any change to the receiver's reported noise state can be interpreted as a click, including a receiver button or another control app. Stop the bridge before adjusting noise settings. The built-in noise control is enabled only while the bridge is stopped.
 - The bridge sends a toggle; it does not read Flow's recording state. Use Flow's recording indicator to confirm a session. The bridge's counter counts shortcuts sent.
 - Very fast clicks during restoration or its short debounce interval may be ignored. Allow Flow to start before clicking again.
 - Holding Shift, Control, Option, Command, or Fn suppresses shortcut generation to avoid mixing it with another key combination.
@@ -99,6 +116,7 @@ git clone https://github.com/geekyshubham/lark-flow-bridge.git
 cd lark-flow-bridge
 ./scripts/build.sh                 # Build for the current Mac architecture
 ./scripts/build.sh --universal     # Include Apple Silicon and Intel
+./scripts/test.sh                  # Exercise receiver status and setting safety fixtures
 ./scripts/check.sh                 # Verify a universal app bundle
 ./scripts/package.sh               # Create release ZIP and SHA-256 checksum
 ```

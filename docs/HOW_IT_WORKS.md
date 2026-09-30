@@ -58,3 +58,9 @@ Wispr Flow is a separate app with its own audio handling, account settings, and 
 ## Verified setup
 
 Verified on macOS 26.3 / Apple Silicon, a LARK A2 USB-C receiver with firmware 3.0.2.008, and Wispr Flow 1.6.999. Receiver status and noise restoration were tested, real Flow start/stop sessions were verified, and the physical button was confirmed working by the user. CI validates compilation and packaging, not physical hardware or transcription.
+
+## Live microphone dashboard (1.1)
+
+Read-only monitoring starts when the app opens and continues after Stop bridge. A status reply must have a valid response header, RX destination and declared payload length of at least 16 bytes. Payload bytes 0/1 indicate transmitter presence, 2/3 report battery percentages, 6 reports noise strength, and byte 15 contains mute bits 0/1 and charging bits 2/3, matching Hollyland's desktop controller parser. Offline/invalid percentages show —. Telemetry becomes unavailable after two seconds without a status reply. Command 0x41 reads RX firmware.
+
+Noise controls are disabled while the dictation bridge runs. A user setting is handled as a separate pending operation, confirmed by status before accepting the new baseline, with a two-second timeout. It never requests a Flow toggle. Other Android controls are not sent without verified protocol support.

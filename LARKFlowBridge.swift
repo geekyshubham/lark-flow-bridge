@@ -10,6 +10,16 @@ final class Bridge: NSObject, NSApplicationDelegate {
     let status = NSTextField(labelWithString: "Bridge is stopped.")
     let details = NSTextField(wrappingLabelWithString: "")
     let startButton = NSButton(title: "Start bridge", target: nil, action: nil)
+    let micLabels = [NSTextField(labelWithString: "—"), NSTextField(labelWithString: "—")]
+    let micStates = [NSTextField(labelWithString: "Waiting for receiver"), NSTextField(labelWithString: "Waiting for receiver")]
+    let batteryBars = [NSProgressIndicator(), NSProgressIndicator()]
+    let receiverLabel = NSTextField(labelWithString: "Receiver disconnected")
+    let noisePicker = NSPopUpButton(frame: .zero, pullsDown: false)
+    let controlHint = NSTextField(labelWithString: "Choose a noise setting while the bridge is stopped.")
+    var bridgeEnabled = false
+    var lastStatusAt: TimeInterval = 0
+    var requestedNoise: UInt8?
+    var settingDeadline: TimeInterval = 0
     var manager: IOHIDManager?
     var device: IOHIDDevice?
     var timer: Timer?
@@ -31,14 +41,14 @@ final class Bridge: NSObject, NSApplicationDelegate {
         appMenu.addItem(withTitle: "Quit LARK Flow Bridge", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
         NSApp.mainMenu = mainMenu
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 590, height: 380), styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 680, height: 570), styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
         window.title = "LARK Flow Bridge"
         window.center()
         let title = NSTextField(labelWithString: "LARK A2 → Wispr Flow")
         title.font = .boldSystemFont(ofSize: 24)
         status.font = .boldSystemFont(ofSize: 15)
         status.maximumNumberOfLines = 2
-        details.stringValue = "Click the transmitter once to start Flow, and again to stop.\n\nThis local workaround detects the microphone's noise button, then restores its original noise setting. Keep Hollyland Web Control closed while using it.\n\nWispr Flow must be running with Fn + Space as its hands-free shortcut. No audio or transcripts are read by this app."
+        details.stringValue = "Click your microphone once to start dictation, and again to stop. Keep Wispr Flow open with Fn + Space as its hands-free shortcut."
         details.font = .systemFont(ofSize: 13)
         startButton.target = self
         startButton.action = #selector(toggle)
@@ -47,10 +57,38 @@ final class Bridge: NSObject, NSApplicationDelegate {
         let row = NSStackView(views: [accessibility, monitoring])
         row.orientation = .horizontal
         row.spacing = 12
-        let stack = NSStackView(views: [title, details, status, startButton, row])
+        var cards: [NSView] = []
+        for i in 0..<2 {
+            let heading = NSTextField(labelWithString: "Microphone \(i + 1)")
+            heading.font = .boldSystemFont(ofSize: 14)
+            micLabels[i].font = .monospacedDigitSystemFont(ofSize: 34, weight: .semibold)
+            micStates[i].textColor = .secondaryLabelColor
+            batteryBars[i].isIndeterminate = false
+            batteryBars[i].minValue = 0; batteryBars[i].maxValue = 100
+            batteryBars[i].style = .bar
+            let card = NSStackView(views: [heading, micLabels[i], batteryBars[i], micStates[i]])
+            card.orientation = .vertical; card.alignment = .leading; card.spacing = 10
+            card.edgeInsets = NSEdgeInsets(top: 18, left: 18, bottom: 18, right: 18)
+            card.wantsLayer = true; card.layer?.cornerRadius = 14
+            card.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+            batteryBars[i].widthAnchor.constraint(equalToConstant: 235).isActive = true
+            cards.append(card)
+        }
+        let microphones = NSStackView(views: cards)
+        microphones.spacing = 20; microphones.distribution = .fillEqually
+        noisePicker.addItems(withTitles: ["Off", "Low", "Medium", "High"])
+        noisePicker.target = self; noisePicker.action = #selector(changeNoise)
+        noisePicker.isEnabled = false
+        let noiseRow = NSStackView(views: [NSTextField(labelWithString: "Noise cancellation"), noisePicker])
+        noiseRow.spacing = 16
+        controlHint.font = .systemFont(ofSize: 12); controlHint.textColor = .secondaryLabelColor
+        receiverLabel.font = .systemFont(ofSize: 12); receiverLabel.textColor = .secondaryLabelColor
+        let phoneNote = NSTextField(wrappingLabelWithString: "Gain, sound tuning, LED settings and firmware updates remain available in HollyAudio on your phone. Battery status stays live while the bridge is stopped.")
+        phoneNote.font = .systemFont(ofSize: 12); phoneNote.textColor = .secondaryLabelColor
+        let stack = NSStackView(views: [title, details, microphones, receiverLabel, noiseRow, controlHint, status, startButton, row, phoneNote])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 18
+        stack.spacing = 14
         stack.translatesAutoresizingMaskIntoConstraints = false
         window.contentView!.addSubview(stack)
         NSLayoutConstraint.activate([
@@ -60,6 +98,7 @@ final class Bridge: NSObject, NSApplicationDelegate {
         ])
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        startMonitoring()
     }
 
     @objc func openAccessibility() {
@@ -71,12 +110,31 @@ final class Bridge: NSObject, NSApplicationDelegate {
     @objc func toggle() {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        if manager != nil { stop(); return }
+        if bridgeEnabled {
+            bridgeEnabled = false; togglePending = false
+            startButton.title = "Start bridge"
+            status.stringValue = "Bridge stopped. Microphone status is still live."
+            controlHint.stringValue = "Choose a noise setting while the bridge is stopped."
+            noisePicker.isEnabled = online && !restorePending && requestedNoise == nil
+            return
+        }
+        guard !restorePending, requestedNoise == nil else {
+            status.stringValue = "Wait for the noise setting to finish updating."; return
+        }
         let requestAccessibility = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         guard AXIsProcessTrustedWithOptions(requestAccessibility) else {
             status.stringValue = "Allow LARK Flow Bridge in Accessibility, then start again."
             return
         }
+        bridgeEnabled = true
+        controlHint.stringValue = "Stop the bridge to adjust noise cancellation."
+        baselineNoise = nil
+        startButton.title = "Stop bridge"
+        noisePicker.isEnabled = false
+        status.stringValue = "Waiting for microphone status…"
+    }
+
+    func startMonitoring() {
         let m = IOHIDManagerCreate(kCFAllocatorDefault, 0)
         IOHIDManagerSetDeviceMatching(m, [kIOHIDVendorIDKey: 13639, kIOHIDProductIDKey: 1041] as CFDictionary)
         let context = Unmanaged.passUnretained(self).toOpaque()
@@ -89,6 +147,8 @@ final class Bridge: NSObject, NSApplicationDelegate {
             bridge.restorePending = false
             bridge.togglePending = false
             bridge.suppressUntil = Date().timeIntervalSince1970 + 1
+            bridge.lastStatusAt = 0
+            bridge.send(command: 0x41)
             bridge.status.stringValue = "Receiver connected. Waiting for a powered-on transmitter…"
             IOHIDDeviceRegisterInputReportCallback(device, bridge.reportBuffer, 256, { context, _, _, _, reportID, data, count in
                 guard let context, reportID == 0x55, count > 0 else { return }
@@ -106,6 +166,8 @@ final class Bridge: NSObject, NSApplicationDelegate {
             bridge.online = false
             bridge.restorePending = false
             bridge.togglePending = false
+            bridge.requestedNoise = nil
+            bridge.clearTelemetry("Receiver disconnected")
             bridge.status.stringValue = "Waiting for the LARK A2 receiver…"
         }, context)
         IOHIDManagerScheduleWithRunLoop(m, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
@@ -116,11 +178,19 @@ final class Bridge: NSObject, NSApplicationDelegate {
             return
         }
         manager = m
-        startButton.title = "Stop bridge"
         status.stringValue = "Waiting for the LARK A2 receiver…"
         timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
             guard let self, self.device != nil else { return }
-            if !AXIsProcessTrusted() { self.stop(); self.status.stringValue = "Stopped: Accessibility permission was removed."; return }
+            if self.bridgeEnabled && !AXIsProcessTrusted() {
+                self.bridgeEnabled = false; self.togglePending = false
+                self.startButton.title = "Start bridge"
+                self.status.stringValue = "Bridge stopped: Accessibility permission was removed."
+            }
+            if self.lastStatusAt > 0 && Date().timeIntervalSince1970 - self.lastStatusAt > 2 {
+                self.clearTelemetry("Receiver not responding. Reconnect it.")
+                self.online = false; self.baselineNoise = nil
+                self.requestedNoise = nil; self.restorePending = false; self.togglePending = false
+            }
             let result = self.send(command: 0x10)
             if result != kIOReturnSuccess && !self.lastPollError {
                 self.lastPollError = true
@@ -146,7 +216,7 @@ final class Bridge: NSObject, NSApplicationDelegate {
             let result = send(command: 0x19, payload: [2])
             if result == kIOReturnSuccess && original > 0 {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
-                    guard let self, self.restorePending, self.baselineNoise == original else { return }
+                    guard let self, (self.restorePending && self.baselineNoise == original) || self.requestedNoise == original else { return }
                     self.send(command: 0x06, payload: [original])
                 }
             }
@@ -156,16 +226,61 @@ final class Bridge: NSObject, NSApplicationDelegate {
     }
 
     func receive(_ bytes: [UInt8]) {
-        guard bytes.count >= 22, bytes[0] == 0xbb, bytes[1] == 0xdd, bytes[2] == 0x10 else { return }
+        guard bytes.count >= 6, bytes[0] == 0xbb, bytes[1] == 0xdd, bytes[3] == 0x80 else { return }
+        let declared = Int(bytes[4]) * 256 + Int(bytes[5])
+        guard bytes.count >= 6 + declared else { return }
+        if bytes[2] == 0x41, declared >= 6 {
+            let v = Array(bytes.dropFirst(6))
+            receiverLabel.stringValue = "USB-C receiver · Firmware \(v[0]).\(v[1]).\(v[2]).\(v[3])\(v[4])\(v[5])"
+            return
+        }
+        guard bytes[2] == 0x10, declared >= 16 else { return }
+        lastStatusAt = Date().timeIntervalSince1970
         let p = Array(bytes.dropFirst(6))
+        for i in 0..<2 {
+            let isOnline = p[i] == 1
+            let battery = p[2+i]
+            let charging = p[15] & UInt8(4 << i) != 0
+            let muted = p[15] & UInt8(1 << i) != 0
+            micLabels[i].stringValue = isOnline && battery <= 100 ? "\(battery)%" : "—"
+            batteryBars[i].doubleValue = isOnline && battery <= 100 ? Double(battery) : 0
+            micStates[i].stringValue = isOnline ? ["Connected", charging ? "Charging" : nil, muted ? "Muted" : nil].compactMap { $0 }.joined(separator: " · ") : "Disconnected"
+            micLabels[i].setAccessibilityLabel("Microphone \(i+1) battery")
+        }
+        if receiverLabel.stringValue.hasPrefix("Receiver") { receiverLabel.stringValue = "USB-C receiver connected"; send(command: 0x41) }
         let connected = p[0] == 1 || p[1] == 1
         let noise = p[6]
+        guard noise <= 3 else {
+            noisePicker.isEnabled = false
+            status.stringValue = "Unsupported noise status. Bridge is paused."
+            bridgeEnabled = false; togglePending = false; startButton.title = "Start bridge"
+            return
+        }
+        noisePicker.selectItem(at: Int(noise))
+        noisePicker.isEnabled = connected && !bridgeEnabled && !restorePending && requestedNoise == nil
         guard connected else {
-            online = false; baselineNoise = nil; restorePending = false; togglePending = false
+            online = false; baselineNoise = nil; restorePending = false; togglePending = false; requestedNoise = nil
             status.stringValue = "Receiver connected. Power on a transmitter."
             return
         }
         let now = Date().timeIntervalSince1970
+        if let requested = requestedNoise {
+            if noise == requested {
+                requestedNoise = nil; baselineNoise = noise
+                noisePicker.isEnabled = connected && !bridgeEnabled
+                controlHint.stringValue = "Noise cancellation updated."
+            } else if now > settingDeadline {
+                requestedNoise = nil; baselineNoise = noise
+                noisePicker.isEnabled = connected && !bridgeEnabled
+                controlHint.stringValue = "Setting was not confirmed. Try again or reconnect the receiver."
+            }
+            return
+        }
+        if !bridgeEnabled && !restorePending {
+            if !online { status.stringValue = "Bridge stopped. Microphone status is live." }
+            online = true; baselineNoise = noise
+            return
+        }
         if !online || baselineNoise == nil {
             online = true; baselineNoise = noise; restorePending = false; togglePending = false
             suppressUntil = now + 1
@@ -192,7 +307,7 @@ final class Bridge: NSObject, NSApplicationDelegate {
                 } else {
                     baselineNoise = noise; restorePending = false; togglePending = false
                     status.stringValue = "Noise restoration failed. Bridge paused; stop and restart."
-                    timer?.invalidate(); timer = nil
+                    bridgeEnabled = false; startButton.title = "Start bridge"; noisePicker.isEnabled = online
                 }
             }
             return
@@ -214,10 +329,32 @@ final class Bridge: NSObject, NSApplicationDelegate {
         status.stringValue = "Button detected. Waiting for the noise setting to be restored…"
     }
 
+    func clearTelemetry(_ message: String) {
+        receiverLabel.stringValue = message; noisePicker.isEnabled = false
+        for i in 0..<2 {
+            micLabels[i].stringValue = "—"; micStates[i].stringValue = "Unavailable"
+            batteryBars[i].doubleValue = 0
+        }
+    }
+
+    @objc func changeNoise() {
+        guard !bridgeEnabled, !restorePending, online, let current = baselineNoise else { return }
+        let target = UInt8(noisePicker.indexOfSelectedItem)
+        guard target != current else { return }
+        requestedNoise = target; settingDeadline = Date().timeIntervalSince1970 + 2
+        noisePicker.isEnabled = false
+        controlHint.stringValue = "Updating noise cancellation…"
+        if restoreNoise(current: current, original: target) != kIOReturnSuccess {
+            requestedNoise = nil; noisePicker.isEnabled = online
+            noisePicker.selectItem(at: Int(current))
+            controlHint.stringValue = "Unable to send the setting. Reconnect the receiver."
+        }
+    }
+
     func sendFlowToggle() -> Bool {
         let previousFlags = CGEventSource.flagsState(.hidSystemState)
         let heldModifiers: CGEventFlags = [.maskShift, .maskControl, .maskAlternate, .maskCommand, .maskSecondaryFn]
-        guard previousFlags.intersection(heldModifiers).isEmpty else { return false }
+        guard bridgeEnabled, previousFlags.intersection(heldModifiers).isEmpty else { return false }
         guard AXIsProcessTrusted(), let source = CGEventSource(stateID: .hidSystemState),
               let fnDown = CGEvent(keyboardEventSource: source, virtualKey: 63, keyDown: true),
               let down = CGEvent(keyboardEventSource: source, virtualKey: 49, keyDown: true),

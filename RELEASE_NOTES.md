@@ -1,8 +1,10 @@
-# LARK Flow Bridge 1.0.0
+# LARK Flow Bridge 1.1.0
 
 Use the physical **Hollyland LARK A2 microphone button** to start and stop **Wispr Flow dictation on macOS**.
 
-This initial community release includes the complete Swift source, a native macOS app with a microphone/link icon, a universal Apple Silicon + Intel binary, build scripts, setup instructions, and troubleshooting guidance.
+This release adds live battery percentages, charging/mute/connection status for both microphones, receiver firmware display, and Off/Low/Medium/High noise controls. Battery monitoring stays active when the bridge is stopped. Stop the bridge before changing noise settings. Gain, tuning, LED, power settings and firmware updates continue to use HollyAudio on your phone.
+
+The community release includes the complete Swift source, a native macOS app with a microphone/link icon, a universal Apple Silicon + Intel binary, build scripts, setup instructions, and troubleshooting guidance.
 
 ## Download
 
